@@ -13,11 +13,41 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
+/// The telemetry object containing the deprecated field has been updated to an
+/// existing or a new telemetry object. The replacement is auto-transformable if the replaced_by_id
+/// is provided.
+/// TODO(bwplotka): Add unit tests. Consider allowing non-tranformable replacements/updates?
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash, JsonSchema)]
+pub struct DeprecatedUpdated {
+    /// The id of the telemetry object that replaces it in auto-transformable way.
+    pub replaced_by_id: String,
+    /// The note to provide more context about the replacement.
+    pub note: String,
+    /// Optional, more complex forward transformation rule in a form of PromQL expression
+    /// containing the "$old" variable to symbolize the old value of the metric.
+    /// e.g. $old * 1000.
+    /// TODO(bwplotka): This is biased towards metric/numerical transformation, but at least...
+    /// uses standard syntax. Perhaps it's ok for metrics (then let's restrict to metrics) or
+    /// something else standard could be used.
+    pub forward_promql: Option<String>,
+    /// Optional, more complex backward transformation rule in a form of PromQL expression
+    /// containing the "$new" variable to symbolize the new value of the metric
+    /// e.g. $new * 1000.
+    /// TODO(bwplotka): This is biased towards metric/numerical transformation, but at least...
+    /// uses standard syntax. Perhaps it's ok for metrics (then let's restrict to metrics) or
+    /// something else standard could be used.
+    pub backward_promql: Option<String>,
+}
+
 /// The different ways to deprecate an attribute, a metric, ...
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-#[serde(tag = "reason")]
+// NOTE(bwplotka): No serde tagging as we use custom deserializer from map here.
 pub enum Deprecated {
+    /// The telemetry object containing the deprecated field has been updated to an
+    /// existing or a new telemetry object. The replacement is auto-transformable if the replaced_by_id
+    /// is provided.
+    Updated(DeprecatedUpdated),
     /// The telemetry object containing the deprecated field has been renamed to an
     /// existing or a new telemetry object.
     Renamed {
@@ -82,15 +112,24 @@ where
         where
             V: MapAccess<'de>,
         {
-            let mut action = None;
+            let mut reason =None;
             let mut new_name = None;
             let mut note = None;
-
+            let mut up = DeprecatedUpdated{
+                replaced_by_id: "".to_owned(),
+                note: "".to_owned(),
+                forward_promql: None,
+                backward_promql: None,
+            };
             while let Some(key) = map.next_key::<String>()? {
                 match key.as_str() {
-                    "reason" => action = Some(map.next_value::<String>()?),
+                    "reason" => reason = Some(map.next_value::<String>()?),
                     "renamed_to" => new_name = Some(map.next_value()?),
                     "note" => note = Some(map.next_value()?),
+                    // TODO(bwplotka): Painful, find more robust way.
+                    "replaced_by_id" => up.replaced_by_id = map.next_value()?,
+                    "forward_promql" => up.forward_promql = map.next_value()?,
+                    "backward_promql" => up.backward_promql = map.next_value()?,
                     _ => {
                         return Err(de::Error::unknown_field(
                             &key,
@@ -100,7 +139,11 @@ where
                 }
             }
 
-            match action.as_deref() {
+            match reason.as_deref() {
+                Some("updated") => {
+                    up.note = note.unwrap_or_else(|| format!("Replaced by `{}`.", up.replaced_by_id));
+                    Ok(Deprecated::Updated(up))
+                }
                 Some("renamed") => {
                     let renamed_to =
                         new_name.ok_or_else(|| de::Error::missing_field("rename_to"))?;
@@ -113,7 +156,7 @@ where
                 Some("uncategorized") => Ok(Deprecated::Uncategorized {
                     note: note.unwrap_or_else(|| "Uncategorized.".to_owned()),
                 }),
-                _ => Err(de::Error::missing_field("action")),
+                _ => Err(de::Error::missing_field("reason")),
             }
         }
     }
@@ -173,6 +216,7 @@ impl Display for Deprecated {
             Deprecated::Renamed { note, .. }
             | Deprecated::Obsoleted { note }
             | Deprecated::Uncategorized { note } => note,
+            Deprecated::Updated(up) => up.note.as_str(),
         };
         write!(f, "{}", text)
     }

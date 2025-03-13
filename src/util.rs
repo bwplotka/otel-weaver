@@ -42,8 +42,9 @@ pub(crate) fn load_semconv_specs(
                 "`{}` semconv registry `{}` loaded ({} files)",
                 registry_repo.id(),
                 registry_repo.registry_path_repr(),
-                semconv_specs.len()
+                semconv_specs.len(),
             ));
+            log.trace(&format!("loaded specs content {:?}", semconv_specs));
         },
     )
 }

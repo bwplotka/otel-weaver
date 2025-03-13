@@ -100,6 +100,7 @@ pub(crate) fn command(
         args.registry.follow_symlinks,
     )
     .capture_non_fatal_errors(&mut diag_msgs)?;
+
     let baseline_semconv_specs = load_semconv_specs(
         &baseline_registry_repo,
         logger.clone(),
@@ -110,6 +111,7 @@ pub(crate) fn command(
     let main_resolved_schema =
         resolve_telemetry_schema(&main_registry_repo, main_semconv_specs, logger.clone())
             .capture_non_fatal_errors(&mut diag_msgs)?;
+
     let baseline_resolved_schema = resolve_telemetry_schema(
         &baseline_registry_repo,
         baseline_semconv_specs,
@@ -174,6 +176,7 @@ mod tests {
             debug: 0,
             quiet: false,
             future: false,
+            simple: false,
             command: Some(Commands::Registry(RegistryCommand {
                 command: RegistrySubCommand::Diff(RegistryDiffArgs {
                     registry: RegistryArgs {

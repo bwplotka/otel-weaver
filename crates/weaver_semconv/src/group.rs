@@ -7,16 +7,129 @@
 use schemars::JsonSchema;
 use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
-
+use std::sync::atomic::AtomicBool;
 use serde::{Deserialize, Serialize};
 
 use crate::any_value::AnyValueSpec;
-use crate::attribute::{AttributeSpec, AttributeType, PrimitiveOrArrayTypeSpec};
+use crate::attribute::{AttributeSpec, AttributeType, PrimitiveOrArrayTypeSpec, ValueSpec};
 use crate::deprecated::Deprecated;
 use crate::group::InstrumentSpec::{Counter, Gauge, Histogram, UpDownCounter};
 use crate::stability::Stability;
 use crate::Error;
 use weaver_common::result::WResult;
+
+/// A flag to globally enable simple mode for group parsing and validation.
+static SIMPLE_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Enable simple mode.
+pub fn enable_simple_mode() {
+    SIMPLE_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Disable simple mode.
+pub fn disable_simple_mode() {
+    SIMPLE_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Returns true if simple mode.
+pub fn is_simple_mode_enabled() -> bool {
+    SIMPLE_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Performs a defaulting pass making group spec easier to use.
+/// Currently, it relates only to metric group type.
+/// Defaulting logic:
+/// * Stability defaults to Stable on all elements.
+/// * Group.metric_name defaults to parsed Group.id following <metric_name>~<unit>.<instrument> or <metric_name>~<instrument>.
+/// * Group.instrument defaults to parsed Group.id following <metric_name>~<unit>.<instrument> or <metric_name>~<instrument>.
+/// * Group.unit defaults to parsed Group.id following <metric_name>~<unit>.<instrument> or "{unknown}"
+/// * Attribute.ID.tag defaults to Attribute.ID.id.
+/// * Attribute.ID.members[*].value defaults to Attribute.ID.members[*].id
+/// TBD
+pub fn pre_validation_defaulting(group: &mut GroupSpec) {
+    if group.r#type != GroupType::Metric {
+        // TODO(bwplotka): Consider expanding simple mode to non-metrics.
+        return
+    }
+
+    if group.metric_name.is_none() || group.instrument.is_none() || group.unit.is_none() {
+        // Try parsing id into <metric_name>~<unit>.<instrument> or <metric_name>~<instrument>.
+        let parts: Vec<&str> = group.id.split('~').collect();
+        if parts.len() >= 1 && group.metric_name.is_none() {
+            group.metric_name = Some(parts[0].to_owned());
+        }
+        if parts.len() > 1 {
+            let unit_instrument_parts: Vec<&str> = parts[1].split('.').collect();
+            if unit_instrument_parts.len() == 1 {
+                // No unit, it must be an instrument.
+                if group.instrument.is_none() {
+                    match serde_yaml::from_str(unit_instrument_parts[0]) {
+                        Ok(parsed) => {
+                            group.instrument = Some(parsed);
+                        }
+                        _ => {},
+                    }
+                }
+            } else if unit_instrument_parts.len() == 2 {
+                // Unit + instrument.
+                if group.unit.is_none() {
+                    group.unit = Some(unit_instrument_parts[0].to_owned());
+                }
+                if group.instrument.is_none() {
+                    match serde_yaml::from_str(unit_instrument_parts[1]) {
+                        Ok(parsed) => {
+                            group.instrument = Some(parsed);
+                        }
+                        _ => {},
+                    }
+                }
+            }
+        }
+        // After all of this, default unit to {unknown}
+        if group.unit.is_none() {
+            group.unit = Some("{unknown}".to_owned());
+        }
+    }
+
+    if group.stability.is_none() {
+        group.stability = Some(Stability::Stable);
+    }
+    for attr in &mut group.attributes {
+        if let AttributeSpec::Id {
+            id,
+            r#type,
+            tag,
+            stability,
+            .. } = attr {
+            if tag.is_none() {
+                *tag = Some(id.to_string());
+            }
+
+            // Easy to miss for local attributes, but ids has to be globally unique.
+            // Detect that and prefix with group.id for ease of use (with #).
+            // TODO(bwplotka): Rethink logic behind IDs so its consistent.
+            let parts: Vec<&str> = id.split('#').collect();
+            if parts.len() == 1 {
+                id.insert_str(0, &format!("{}#", group.id));
+            }
+            if stability.is_none() {
+                *stability = Some(Stability::Stable);
+            }
+            if let AttributeType::Enum {
+                members,
+                .. } = r#type {
+                for member in members {
+                    if member.stability.is_none() {
+                        member.stability = Some(Stability::Stable);
+                    }
+                    if member.value.to_string().is_empty() {
+                        member.value = ValueSpec::String(member.id.to_string());
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Group Spec contain the list of semantic conventions for attributes,
 /// metrics, events, spans, etc.
@@ -76,6 +189,7 @@ pub struct GroupSpec {
     pub events: Vec<String>,
     /// The metric name as described by the [OpenTelemetry Specification](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/metrics/data-model.md#timeseries-model).
     /// Note: This field is required if type is metric.
+    /// NOTE(bwplotka): --simple mode alter the requirement of this field, see pre_validation_defaulting for details.
     pub metric_name: Option<String>,
     /// The instrument type that should be used to record the metric. Note that
     /// the semantic conventions must be written using the names of the
@@ -83,10 +197,12 @@ pub struct GroupSpec {
     /// histogram).
     /// For more details: [Metrics semantic conventions - Instrument types](https://github.com/open-telemetry/opentelemetry-specification/tree/main/specification/metrics/semantic_conventions#instrument-types).
     /// Note: This field is required if type is metric.
+    /// NOTE(bwplotka): --simple mode alter the requirement of this field, see pre_validation_defaulting for details.
     pub instrument: Option<InstrumentSpec>,
     /// The unit in which the metric is measured, which should adhere to the
     /// [guidelines](https://github.com/open-telemetry/opentelemetry-specification/tree/main/specification/metrics/semantic_conventions#instrument-units).
     /// Note: This field is required if type is metric.
+    /// NOTE(bwplotka): --simple mode alter the requirement of this field, see pre_validation_defaulting for details.
     pub unit: Option<String>,
     /// The name of the event. If not specified, the prefix is used.
     /// If prefix is empty (or unspecified), name is required.
@@ -1643,6 +1759,68 @@ mod tests {
         assert_eq!(Gauge.to_string(), "gauge");
         assert_eq!(Histogram.to_string(), "histogram");
         assert_eq!(UpDownCounter.to_string(), "updowncounter");
+    }
+
+    #[test]
+    fn test_pre_validation_defaulting_simple1() {
+        let mut simple = GroupSpec {
+            id: "my.metric.name~counter".to_owned(),
+            r#type: GroupType::Metric,
+            brief: "test".to_owned(),
+            note: "".to_owned(),
+            prefix: "".to_owned(),
+            extends: None,
+            stability: None,
+            deprecated: None,
+            attributes: vec![],
+            constraints: vec![],
+            span_kind: None,
+            events: vec![],
+            metric_name: None,
+            instrument: None,
+            unit: None,
+            name: None,
+            display_name: None,
+            body: None,
+        };
+
+        pre_validation_defaulting(&mut simple);
+
+        assert_eq!(simple.stability, Some(Stability::Stable));
+        assert_eq!(simple.metric_name, Some("my.metric.name".to_owned()));
+        assert_eq!(simple.instrument, Some(Counter));
+        assert_eq!(simple.unit, Some("{unknown}".to_owned()));
+    }
+
+    #[test]
+    fn test_pre_validation_defaulting_simple2() {
+        let mut simple = GroupSpec {
+            id: "my.metric.name~unit1.counter".to_owned(),
+            r#type: GroupType::Metric,
+            brief: "test".to_owned(),
+            note: "".to_owned(),
+            prefix: "".to_owned(),
+            extends: None,
+            stability: None,
+            deprecated: None,
+            attributes: vec![],
+            constraints: vec![],
+            span_kind: None,
+            events: vec![],
+            metric_name: None,
+            instrument: None,
+            unit: None,
+            name: None,
+            display_name: None,
+            body: None,
+        };
+
+        pre_validation_defaulting(&mut simple);
+
+        assert_eq!(simple.stability, Some(Stability::Stable));
+        assert_eq!(simple.metric_name, Some("my.metric.name".to_owned()));
+        assert_eq!(simple.instrument, Some(Counter));
+        assert_eq!(simple.unit, Some("unit1".to_owned()));
     }
 }
 

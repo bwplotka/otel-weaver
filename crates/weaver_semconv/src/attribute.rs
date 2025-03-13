@@ -323,6 +323,8 @@ pub struct EnumEntriesSpec {
     /// String that uniquely identifies the enum entry.
     pub id: String,
     /// String, int, or boolean; value of the enum entry.
+    /// TODO(bwplotka): Changed to enable --simple mode. Validate this for non simple mode.
+    #[serde(default)]
     pub value: ValueSpec,
     /// Brief description of the enum entry value.
     /// It defaults to the value of id.
@@ -356,6 +358,11 @@ pub enum ValueSpec {
     String(String),
 }
 
+impl Default for ValueSpec {
+    fn default() -> Self {
+        ValueSpec::String("".to_owned())
+    }
+}
 /// Implements a human readable display for Value.
 impl Display for ValueSpec {
     /// Formats the value.

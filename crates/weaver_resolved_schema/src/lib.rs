@@ -5,6 +5,7 @@
 //! A Resolved Telemetry Schema is self-contained and doesn't contain any
 //! external references to other schemas or semantic conventions.
 
+use std::any::Any;
 use crate::attribute::Attribute;
 use crate::catalog::Catalog;
 use crate::instrumentation_library::InstrumentationLibrary;
@@ -12,12 +13,13 @@ use crate::registry::{Group, Registry};
 use crate::resource::Resource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use weaver_semconv::deprecated::Deprecated;
-use weaver_semconv::group::GroupType;
+use weaver_semconv::deprecated::{Deprecated, DeprecatedUpdated};
+use weaver_semconv::group::{is_simple_mode_enabled, GroupType};
 use weaver_semconv::manifest::RegistryManifest;
-use weaver_version::schema_changes::{SchemaChanges, SchemaItemChange, SchemaItemType};
+use weaver_version::schema_changes::{SchemaChanges, SchemaItemChange, SchemaItemChangeRenamed, SchemaItemChangeUpdated, SchemaItemType};
 use weaver_version::Versions;
+use std::collections::HashMap;
+use weaver_semconv::attribute::AttributeType;
 
 pub mod attribute;
 pub mod catalog;
@@ -278,7 +280,7 @@ impl ResolvedTelemetrySchema {
         let latest_attributes = self.registry_attribute_map();
         let baseline_attributes = baseline_schema.registry_attribute_map();
 
-        // ToDo for future PR, process differences at the field level (not required for the schema update)
+        // TODO for future PR, process differences at the field level (not required for the schema update)
 
         // Collect all the information related to the attributes that have been
         // deprecated in the latest schema.
@@ -287,7 +289,7 @@ impl ResolvedTelemetrySchema {
 
             if let Some(baseline_attr) = baseline_attr {
                 if let Some(deprecated) = attr.deprecated.as_ref() {
-                    // is this a change from the baseline?
+                    // Is this a change from the baseline?
                     if let Some(baseline_deprecated) = baseline_attr.deprecated.as_ref() {
                         if deprecated == baseline_deprecated {
                             // This attribute was already deprecated in the baseline.
@@ -296,18 +298,25 @@ impl ResolvedTelemetrySchema {
                         }
                     }
 
+                    // It's a new deprecation, detect changes.
                     match deprecated {
+                        Deprecated::Updated {
+                         ..
+                        } => {
+                            // TODO(bwplotka): Implement.
+                            panic!("not implemented")
+                        }
                         Deprecated::Renamed {
                             renamed_to: rename_to,
                             note,
                         } => {
                             changes.add_change(
                                 SchemaItemType::RegistryAttributes,
-                                SchemaItemChange::Renamed {
+                                SchemaItemChange::Renamed(SchemaItemChangeRenamed{
                                     old_name: baseline_attr.name.clone(),
                                     new_name: rename_to.clone(),
                                     note: note.clone(),
-                                },
+                                }),
                             );
                         }
                         Deprecated::Obsoleted { note } => {
@@ -365,8 +374,8 @@ impl ResolvedTelemetrySchema {
     ) {
         // Collect all the information related to the signals that have been
         // deprecated in the latest schema.
-        for (signal_name, group) in latest_signals.iter() {
-            let baseline_group = baseline_signals.get(signal_name);
+        for (id, group) in latest_signals.iter() {
+            let baseline_group = baseline_signals.get(id);
 
             if let Some(baseline_group) = baseline_group {
                 if let Some(deprecated) = group.deprecated.as_ref() {
@@ -378,24 +387,45 @@ impl ResolvedTelemetrySchema {
                     }
 
                     match deprecated {
+                        Deprecated::Updated(up) => {
+                            // TODO(bwplotka): Would it be safer to take baseline content for group.id,
+                            // for the replaced item?
+                            match self.detect_replace_updated_change(up, group, latest_signals) {
+                                Ok(up) => {
+                                    changes.add_change(
+                                        schema_item_type,
+                                        SchemaItemChange::Updated(up),
+                                    );
+                                }
+                                Err(e) => {
+                                    changes.add_change(
+                                        schema_item_type,
+                                        SchemaItemChange::Uncategorized {
+                                            name: (*id).to_owned(),
+                                            note: e.to_string(),
+                                        },
+                                    );
+                                }
+                            }
+                        }
                         Deprecated::Renamed {
                             renamed_to: rename_to,
                             note,
                         } => {
                             changes.add_change(
                                 schema_item_type,
-                                SchemaItemChange::Renamed {
-                                    old_name: (*signal_name).to_owned(),
+                                SchemaItemChange::Renamed(SchemaItemChangeRenamed{
+                                    old_name: (*id).to_owned(),
                                     new_name: rename_to.clone(),
                                     note: note.clone(),
-                                },
+                                }),
                             );
                         }
                         Deprecated::Obsoleted { note } => {
                             changes.add_change(
                                 schema_item_type,
                                 SchemaItemChange::Obsoleted {
-                                    name: (*signal_name).to_owned(),
+                                    name: (*id).to_owned(),
                                     note: note.clone(),
                                 },
                             );
@@ -404,7 +434,7 @@ impl ResolvedTelemetrySchema {
                             changes.add_change(
                                 schema_item_type,
                                 SchemaItemChange::Uncategorized {
-                                    name: (*signal_name).to_owned(),
+                                    name: (*id).to_owned(),
                                     note: note.clone(),
                                 },
                             );
@@ -415,7 +445,7 @@ impl ResolvedTelemetrySchema {
                 changes.add_change(
                     schema_item_type,
                     SchemaItemChange::Added {
-                        name: (*signal_name).to_owned(),
+                        name: (*id).to_owned(),
                     },
                 );
             }
@@ -425,16 +455,139 @@ impl ResolvedTelemetrySchema {
         // is considered removed.
         // Note: This should never occur if the registry evolution process is followed.
         // However, detecting this case is useful for identifying a violation of the process.
-        for (signal_name, _) in baseline_signals.iter() {
-            if !latest_signals.contains_key(signal_name) {
+        for (id, _) in baseline_signals.iter() {
+            if !latest_signals.contains_key(id) {
                 changes.add_change(
                     schema_item_type,
                     SchemaItemChange::Removed {
-                        name: (*signal_name).to_owned(),
+                        name: (*id).to_owned(),
                     },
                 );
             }
         }
+    }
+
+    fn detect_replace_updated_change(&self, deprecated_entry: &DeprecatedUpdated, deprecated_group: &Group, latest_signals: &HashMap<&str, &Group>) -> Result<SchemaItemChangeUpdated, String>{
+        if !is_simple_mode_enabled() {
+            // TODO(bwplotka): Expand globally.
+            return Err("generally, this feature implementation requires --simple mode as of now.".to_owned())
+        }
+
+        let replacement = match latest_signals.get(&deprecated_entry.replaced_by_id as &str) {
+            Some(replacement) => replacement,
+            None => return Err(format!("deprecated with the reason update have replaced_by_id {} that can't be found. Can't compile this change; note {}", deprecated_entry.replaced_by_id, deprecated_entry.note)),
+        };
+
+        // Fields.
+        let mut field_changes: HashMap<String, SchemaItemChangeRenamed> = HashMap::new();
+        if replacement.metric_name != deprecated_group.metric_name {
+            _ = field_changes.insert("metric_name".to_owned(), SchemaItemChangeRenamed{
+                old_name: deprecated_group.metric_name.clone().unwrap_or_else(|| "".to_owned()),
+                new_name: replacement.metric_name.clone().unwrap_or_else(|| "".to_owned()),
+                note: "".to_owned(),
+            });
+        }
+        if replacement.unit != deprecated_group.unit {
+            _ = field_changes.insert("unit".to_owned(), SchemaItemChangeRenamed{
+                old_name: deprecated_group.unit.clone().unwrap_or_else(|| "".to_owned()),
+                new_name: replacement.unit.clone().unwrap_or_else(|| "".to_owned()),
+                note: "".to_owned(),
+            });
+        }
+        if replacement.instrument != deprecated_group.instrument {
+            let replacement_instr = match &replacement.instrument {
+                Some(s) => s,
+                None => return Err(format!("deprecated with the reason update replaced_by_id {} replacement does not have instrument specified; for metrics it's required. Can't compile this change; note {}", deprecated_entry.replaced_by_id, deprecated_entry.note)),
+            };
+            let deprecated_instr = match &deprecated_group.instrument {
+                Some(s) => s,
+                None => return Err(format!("deprecated with the reason update does not have instrument specified; for metrics it's required. Can't compile this change; note {}", deprecated_entry.note)),
+            };
+            _ = field_changes.insert("instrument".to_owned(), SchemaItemChangeRenamed{
+                old_name: replacement_instr.to_string(),
+                new_name: deprecated_instr.to_string(),
+                note: "".to_owned(),
+            });
+        }
+
+        // Diff local attributes (should it be done in the diff_attributes and injected in the related change?)
+        // Make it work for local only attributes for now.
+        let mut attribute_changes: HashMap<String, SchemaItemChange> = HashMap::new();
+        let deprecated_attributes = Attribute::local_only_map(
+            deprecated_group.attributes(&self.catalog).unwrap_or_else(|_| {Vec::new()}));
+        let replacement_attributes = Attribute::local_only_map(
+            replacement.attributes(&self.catalog).unwrap_or_else(|_| {Vec::new()}));
+
+        for (replacement_attr_local_id, replacement_attr) in &replacement_attributes {
+            let deprecated_attr_match = deprecated_attributes.get(replacement_attr_local_id);
+            if deprecated_attr_match.is_none() {
+                // TODO(bwplotka): Those are not easily transformable for consumers (?) should we
+                // mark this deprecation as not tranformable?
+                _ = attribute_changes.insert(replacement_attr_local_id.to_string(), SchemaItemChange::Added{
+                    name: replacement_attr_local_id.to_string(),
+                });
+                continue
+            }
+            // TODO(bwplotka): Handle gaps, we only check tag and members for now.
+            let deprecated_attr = deprecated_attr_match.unwrap();
+            {
+                let d_attr_tag = match &deprecated_attr.tag {
+                    Some(s) => s,
+                    None => return Err(format!("tag must be specified {:?} Can't compile this change; note {}", deprecated_attr, deprecated_entry.note)),
+                };
+                let r_attr_tag = match &replacement_attr.tag {
+                    Some(s) => s,
+                    None => return Err(format!("tag must be specified {:?} Can't compile this change; note {}", replacement_attr, deprecated_entry.note)),
+                };
+                if d_attr_tag != r_attr_tag {
+                    _ = attribute_changes.insert(replacement_attr_local_id.to_string(), SchemaItemChange::Renamed(SchemaItemChangeRenamed{
+                        old_name: d_attr_tag.to_string(),
+                        new_name: r_attr_tag.to_string(),
+                        note: "".to_owned(),
+                    }));
+                }
+            }
+            if deprecated_attr.r#type.type_id() != replacement_attr.r#type.type_id() {
+                return Err(format!("attribute change type; not supported for now replacement {:?} vs deprecated {:?}. Can't compile this change; note {}", replacement_attr, deprecated_attr, deprecated_entry.note))
+            }
+
+            // TODO(bwplotka): This is where I stopped the diff work. I realized even if I
+            // manage to find a generic change record that will work for global vs local attribute, metric
+            // fields but also members, I might need a totally different structure of "variants".
+            // Trying this on a different branch (:
+            // match (deprecated_attr, replacement_attr) {
+            //     (
+            //         AttributeType::Enum { members: members1, .. },
+            //         AttributeType::Enum { members: members2, .. },
+            //     ) => {
+            //        // How to represent them?
+            //     },
+            //     _ => {},
+            // }
+
+
+            // TODO(bwplotka): It would be useful to do some full validation if no other diff
+            // element was missed (which def was, not everything is implemented).
+        }
+        for (deprecated_attr_local_id, deprecated_attr) in &deprecated_attributes {
+            // TODO(bwplotka): Those are not easily transformable for consumers (?) should we
+            // mark this deprecation as not convertable?
+            if replacement_attributes.get(deprecated_attr_local_id).is_none() {
+                _ = attribute_changes.insert(deprecated_attr.name.to_string(), SchemaItemChange::Removed{
+                    name: deprecated_attr.name.to_string(),
+                });
+            }
+        }
+
+        Ok(SchemaItemChangeUpdated{
+            id: deprecated_group.id.to_owned(),
+            replaced_by_id: deprecated_entry.replaced_by_id.clone(),
+            forward_promql: deprecated_entry.forward_promql.clone(),
+            backward_promql: deprecated_entry.backward_promql.clone(),
+            fields: field_changes,
+            attributes: attribute_changes,
+            note: deprecated_entry.note.clone(),
+        })
     }
 }
 

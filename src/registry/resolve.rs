@@ -110,6 +110,7 @@ mod tests {
             debug: 0,
             quiet: false,
             future: false,
+            simple: false,
             command: Some(Commands::Registry(RegistryCommand {
                 command: RegistrySubCommand::Resolve(RegistryResolveArgs {
                     registry: RegistryArgs {
@@ -140,6 +141,7 @@ mod tests {
             debug: 0,
             quiet: false,
             future: false,
+            simple: false,
             command: Some(Commands::Registry(RegistryCommand {
                 command: RegistrySubCommand::Resolve(RegistryResolveArgs {
                     registry: RegistryArgs {

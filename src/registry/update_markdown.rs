@@ -145,6 +145,7 @@ mod tests {
             debug: 0,
             quiet: false,
             future: false,
+            simple: false,
             command: Some(Commands::Registry(RegistryCommand {
                 command: RegistrySubCommand::UpdateMarkdown(RegistryUpdateMarkdownArgs {
                     markdown_dir: "data/update_markdown/markdown".to_owned(),

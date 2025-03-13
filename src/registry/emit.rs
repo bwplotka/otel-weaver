@@ -101,6 +101,7 @@ mod tests {
             debug: 1,
             quiet: false,
             future: false,
+            simple: false,
             command: Some(Commands::Registry(RegistryCommand {
                 command: RegistrySubCommand::Emit(RegistryEmitArgs {
                     registry: RegistryArgs {

@@ -2,7 +2,7 @@
 
 //! Semantic convention specification.
 
-use crate::group::GroupSpec;
+use crate::group::{is_simple_mode_enabled, pre_validation_defaulting, GroupSpec};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -59,9 +59,17 @@ impl SemConvSpec {
 
         match from_file_or_fatal(path.as_ref(), &provenance) {
             Ok(semconv_spec) => {
+                let mut mutable_spec = semconv_spec; // Make it mutable
+
+                if is_simple_mode_enabled() {
+                    for group in &mut mutable_spec.groups{
+                        pre_validation_defaulting(group);
+                    }
+                }
+
                 // Important note: the resolution process expects this step of validation to be done for
                 // each semantic convention spec.
-                semconv_spec.validate(&provenance)
+                mutable_spec.validate(&provenance)
             }
             Err(e) => WResult::FatalErr(e),
         }

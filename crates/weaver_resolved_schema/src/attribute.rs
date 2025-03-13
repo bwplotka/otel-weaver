@@ -4,6 +4,7 @@
 
 //! Specification of a resolved attribute.
 
+use std::collections::HashMap;
 use crate::tags::Tags;
 use crate::value::Value;
 use schemars::JsonSchema;
@@ -20,7 +21,8 @@ use weaver_semconv::stability::Stability;
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Attribute {
-    /// Attribute name.
+    /// Attribute name/id.
+    /// --simple mode alters it's logic, see Group::pre_validation_defaulting for details.
     pub name: String,
     /// Either a string literal denoting the type as a primitive or an
     /// array type, a template type or an enum definition.
@@ -103,6 +105,23 @@ impl Display for AttributeRef {
 }
 
 impl Attribute {
+
+    /// local_only_map returns map of local attributes by local id part.
+    /// NOTE(bwplotka): Currently this only works in --simple mode.
+    pub fn local_only_map(v: Vec<&Attribute>) -> HashMap<String, &Attribute> {
+        let mut ret: HashMap<String, &Attribute> = HashMap::new();
+        for attr in v.iter() {
+            // Matching of local attributes is a bit tricky. Those are in the form of <metric id>#<attribute id>.
+            let parts: Vec<&str> = attr.name.split('#').collect();
+            if parts.len() == 1 {
+                // Not a local attr. Global attributes are handled in diff_attr.
+                continue
+            }
+            _ = ret.insert(parts[1].to_string(), *attr);
+        }
+        ret
+    }
+
     /// Creates a new string attribute.
     /// Note: This constructor is used for testing purposes.
     #[cfg(test)]

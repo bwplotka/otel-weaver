@@ -13,6 +13,7 @@ use weaver_common::{ConsoleLogger, Logger};
 use weaver_forge::config::{Params, WeaverConfig};
 use weaver_forge::file_loader::EmbeddedFileLoader;
 use weaver_forge::{OutputDirective, TemplateEngine};
+use weaver_semconv::group::enable_simple_mode;
 
 use crate::cli::{Cli, Commands};
 use crate::diagnostic::DEFAULT_DIAGNOSTIC_TEMPLATES;
@@ -100,6 +101,9 @@ fn main() {
 fn run_command(cli: &Cli, log: impl Logger + Sync + Clone) -> ExitDirectives {
     if cli.future {
         enable_future_mode();
+    }
+    if cli.simple {
+        enable_simple_mode();
     }
     let cmd_result = match &cli.command {
         Some(Commands::Registry(params)) => semconv_registry(log.clone(), params),

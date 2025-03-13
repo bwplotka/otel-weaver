@@ -31,6 +31,13 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub future: bool,
 
+    /// Enable simple mode, where schema validation is relaxed and assume certain defaults.
+    /// See group::pre_validation_defaulting for details.
+    /// TODO(bwplotka): Global for ease of impl, likely need to move to specific subcommands that
+    /// parse schema.
+    #[arg(long, global = true)]
+    pub simple: bool,
+
     /// List of supported commands
     #[command(subcommand)]
     pub command: Option<Commands>,

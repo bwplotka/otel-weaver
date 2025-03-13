@@ -177,6 +177,7 @@ mod tests {
             debug: 0,
             quiet: false,
             future: false,
+            simple: false,
             command: Some(Commands::Registry(RegistryCommand {
                 command: RegistrySubCommand::Generate(RegistryGenerateArgs {
                     target: "rust".to_owned(),
@@ -252,6 +253,7 @@ mod tests {
             debug: 0,
             quiet: false,
             future: false,
+            simple: false,
             command: Some(Commands::Registry(RegistryCommand {
                 command: RegistrySubCommand::Generate(RegistryGenerateArgs {
                     target: "rust".to_owned(),
@@ -292,6 +294,7 @@ mod tests {
             debug: 0,
             quiet: false,
             future: false,
+            simple: false,
             command: Some(Commands::Registry(RegistryCommand {
                 command: RegistrySubCommand::Generate(RegistryGenerateArgs {
                     target: "rust".to_owned(),
@@ -404,6 +407,7 @@ mod tests {
                 debug: 0,
                 quiet: false,
                 future: false,
+                simple: false,
                 command: Some(Commands::Registry(RegistryCommand {
                     command: RegistrySubCommand::Generate(RegistryGenerateArgs {
                         target: "rust".to_owned(),

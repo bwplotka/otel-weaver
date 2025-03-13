@@ -82,7 +82,7 @@ impl EmbeddedFileLoader {
             Err(TargetNotSupported {
                 root_path: embedded_dir.path().to_string_lossy().to_string(),
                 target: target.to_owned(),
-                error: "Target not found".to_owned(),
+                error: format!("Target not found {:?}", embedded_dir),
             })
         }
     }

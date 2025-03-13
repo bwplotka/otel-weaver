@@ -45,6 +45,58 @@ pub struct RegistryManifest {
     pub semconv_version: String,
 }
 
+/// A top-level telemetry object from the baseline registry was renamed in the head registry.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SchemaItemChangeRenamed {
+    /// The old name of the telemetry object that has been renamed.
+    // //TODO(bwplotka): ID or metric name for metric?
+    pub old_name: String,
+    /// The new name of the telemetry object that has been renamed.
+    pub new_name: String,
+    /// A note providing further context.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+/// See Deprecated::Updated for details.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SchemaItemChangeUpdated {
+    /// id of the object that this change relates to.
+    pub id: String,
+
+    /// id of the object that suppose to replace this object.
+    pub replaced_by_id: String,
+
+    /// Represent any field that got renamed, referenced by field name.
+    /// TODO(bwplotka): This abuses schemaItemChangeRename a bit (not everything has a "name" e.g.
+    ///  instrument is not a name?). Should we have a dedicated type?
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub fields: HashMap<String, SchemaItemChangeRenamed>,
+    /// Represent any local attributes that got changed, referenced by name/id.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub attributes: HashMap<String, SchemaItemChange>,
+
+    /// Optional, more complex forward transformation rule in a form of PromQL expression
+    /// containing the "$old" variable to symbolize the old value of the metric.
+    /// e.g. $old * 1000
+    /// TODO(bwplotka): This is biased towards metric/numerical transformation, but at least...
+    /// uses standard syntax. Perhaps it's ok for metrics (then let's restrict to metrics) or
+    /// something else standard could be used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forward_promql: Option<String>,
+    /// Optional, more complex backward transformation rule in a form of PromQL expression
+    /// containing the "$new" variable to symbolize the new value of the metric
+    /// e.g. $new * 1000
+    /// TODO(bwplotka): This is biased towards metric/numerical transformation, but at least...
+    /// uses standard syntax. Perhaps it's ok for metrics (then let's restrict to metrics) or
+    /// something else standard could be used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backward_promql: Option<String>,
+
+    /// A replacement note providing further context.
+    pub note: String,
+}
+
 /// Represents the different types of changes that can occur between
 /// two versions of a schema. This covers changes such as adding, removing,
 /// renaming, and deprecating telemetry objects (attributes, metrics, etc.).
@@ -54,25 +106,17 @@ pub struct RegistryManifest {
 pub enum SchemaItemChange {
     /// A top-level telemetry object (e.g., attribute, metric, etc.) was added to the head registry.
     Added {
-        /// The name of the added telemetry object.
+        /// The name/id of the added telemetry object.
         name: String,
     },
     /// A top-level telemetry object from the baseline registry was renamed in the head registry.
-    Renamed {
-        /// The old name of the telemetry object that has been renamed.
-        old_name: String,
-        /// The new name of the telemetry object that has been renamed.
-        new_name: String,
-        /// A note providing further context.
-        note: String,
-    },
-    /// One or more fields in a top-level telemetry object have been updated in the head registry.
-    /// Note: This is a placeholder for future use.
-    Updated {},
+    Renamed(SchemaItemChangeRenamed),
+    /// See Deprecated::Updated for details.
+    Updated(SchemaItemChangeUpdated),
     /// A top-level telemetry object that is now discontinued without a valid replacement in the
     /// head registry.
     Obsoleted {
-        /// The name of the obsoleted telemetry object.
+        /// The name/id of the obsoleted telemetry object.
         name: String,
         /// A deprecation note providing further context.
         note: String,
@@ -81,14 +125,14 @@ pub enum SchemaItemChange {
     /// This type serves as a fallback when no specific category applies, with the expectation that
     /// some of these changes will be reclassified into more precise schema types in the future.
     Uncategorized {
-        /// The name of the uncategorized telemetry object.
+        /// The name/id of the uncategorized telemetry object.
         name: String,
         /// A note providing further context.
         note: String,
     },
     /// A top-level telemetry object from the baseline registry was removed in the head registry.
     Removed {
-        /// The name of the removed telemetry object.
+        /// The name/id of the removed telemetry object.
         name: String,
     },
 }

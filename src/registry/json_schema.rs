@@ -100,6 +100,7 @@ mod tests {
             debug: 0,
             quiet: false,
             future: false,
+            simple: false,
             command: Some(Commands::Registry(RegistryCommand {
                 command: RegistrySubCommand::JsonSchema(RegistryJsonSchemaArgs {
                     output: None,
